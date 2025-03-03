@@ -15,24 +15,102 @@ from tia_portal.protocol.composition import Composition, CompositionItem
 from tia_portal.protocol.objects import TiaObject
 from tia_portal.version import TiaVersion
 
+# Load configuration and detect environment
 cfg.load()
 
+# Import .NET libraries
 from System.Diagnostics import Process  # type: ignore pylint: disable=import-error,wrong-import-position,wrong-import-order
 from System.IO import DirectoryInfo, FileInfo  # type: ignore pylint: disable=import-error,wrong-import-position,wrong-import-order
 
-dll_path = (
-    f"C:\\Program Files\\Siemens\\Automation\\"
-    f"Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}"
-    "\\Siemens.Engineering.dll"
-)
+
+# Function to find the correct DLL path
+def find_dll_path():
+    """Find the correct DLL path based on environment and TIA Portal version."""
+    # List of possible DLL locations - try multiple paths for flexibility
+    possible_paths = []
+
+    # Build base paths based on environment
+    if cfg.IS_WSL:
+        # When in WSL, we should first check the path in WSL format
+        wsl_base_path = f"/mnt/c/Program Files/Siemens/Automation/Portal {cfg.VERSION.name}/PublicAPI/V{cfg.VERSION.value.replace('_', '.')}"
+        wsl_dll_path = f"{wsl_base_path}/Siemens.Engineering.dll"
+
+        print(f"Checking WSL path: {wsl_dll_path}")
+        if os.path.exists(wsl_dll_path):
+            print(f"Found DLL at WSL path: {wsl_dll_path}")
+            return wsl_dll_path
+
+        # If direct WSL path doesn't work, we may need to use the Windows path with pythonnet
+        # This requires the Windows path format for clr.AddReference
+        windows_base_path = f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}"
+        windows_dll_path = f"{windows_base_path}\\Siemens.Engineering.dll"
+
+        # Convert from Windows to WSL path for os.path.exists check
+        windows_path_for_check = cfg.windows_path_to_wsl(windows_dll_path)
+        print(f"Checking Windows path converted to WSL: {windows_path_for_check}")
+
+        if os.path.exists(windows_path_for_check):
+            print(f"Found DLL at Windows path (via WSL conversion): {windows_dll_path}")
+            # Use the Windows path format for clr.AddReference
+            return windows_dll_path
+
+        # Try alternative WSL path formats
+        alt_wsl_path = f"/mnt/c/Program Files/Siemens/Automation/Portal V{cfg.VERSION.value.replace('_', '.')}/PublicAPI/V{cfg.VERSION.value.replace('_', '.')}/Siemens.Engineering.dll"
+        if os.path.exists(alt_wsl_path):
+            print(f"Found DLL at alternative WSL path: {alt_wsl_path}")
+            return alt_wsl_path
+    else:
+        # Standard path for native Windows Python
+        windows_dll_path = f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}\\Siemens.Engineering.dll"
+
+        if os.path.exists(windows_dll_path):
+            print(f"Found DLL at Windows path: {windows_dll_path}")
+            return windows_dll_path
+
+    # If we reach here, we couldn't find the DLL
+    print("Could not find the DLL in any of the standard locations.")
+
+    # Return a default path that will likely fail, but with a clear error
+    if cfg.IS_WSL:
+        return f"/mnt/c/Program Files/Siemens/Automation/Portal {cfg.VERSION.name}/PublicAPI/V{cfg.VERSION.value.replace('_', '.')}/Siemens.Engineering.dll"
+    else:
+        return f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}\\Siemens.Engineering.dll"
+
+
+# Find the correct DLL path
+print("Searching for TIA Portal DLL...")
+dll_path = find_dll_path()
 
 if not os.path.exists(dll_path):
-    raise tia_e.LibraryDLLNotFound(f"Could not find {dll_path}")
+    if cfg.IS_WSL:
+        raise tia_e.LibraryDLLNotFound(
+            f"Could not find the TIA Portal DLL at {dll_path}.\n"
+            f"When running in WSL, make sure TIA Portal V{cfg.VERSION.value} is installed on Windows and accessible from WSL.\n"
+            f"Try running 'ls -la {os.path.dirname(dll_path)}' to check if the directory exists and is accessible."
+        )
+    else:
+        raise tia_e.LibraryDLLNotFound(
+            f"Could not find {dll_path}. Please check if TIA Portal V{cfg.VERSION.value} is installed correctly."
+        )
 
 try:
+    print(f"Loading DLL from: {dll_path}")
     clr.AddReference(dll_path)  # type: ignore pylint: disable=no-member
 except Exception as e:
-    raise tia_e.LibraryImportError(f"Could not load {dll_path}") from e
+    if cfg.IS_WSL:
+        raise tia_e.LibraryImportError(
+            f"Failed to load the TIA Portal DLL from WSL.\n"
+            f"DLL path: {dll_path}\n"
+            f"Error: {str(e)}\n"
+            f"In WSL environments, you need to:\n"
+            f"1. Make sure TIA Portal V{cfg.VERSION.value} is installed on Windows\n"
+            f"2. Ensure that .NET Framework is properly installed\n"
+            f"3. Consider using Windows Python instead of WSL for direct TIA Portal access"
+        ) from e
+    else:
+        raise tia_e.LibraryImportError(
+            f"Could not load {dll_path}. Error: {str(e)}"
+        ) from e
 
 try:
     import Siemens.Engineering as tia  # type: ignore pylint: disable=import-error
@@ -1046,15 +1124,22 @@ class PLCBlock(CompositionItem):
         if not self.value.IsConsistent:
             raise tia_e.InvalidBlock("Block is inconsistent")
 
-        new_file = os.path.join(cfg.DATA_PATH, "exported_blocks", f"{self.name}.xml")
+        # Use normalized path for export
+        export_dir = os.path.join(cfg.DATA_PATH, "exported_blocks")
+        if not os.path.exists(export_dir):
+            os.makedirs(export_dir)
 
-        if not os.path.exists(os.path.dirname(new_file)):
-            os.makedirs(os.path.dirname(new_file))
+        new_file = os.path.join(export_dir, f"{self.name}.xml")
 
-        file_info = FileInfo(new_file)
+        # Convert to Windows path for FileInfo
+        win_file = cfg.normalize_path(new_file)
+        file_info = FileInfo(win_file)
 
         self.value.Export(file_info, tia.ExportOptions(0))  # type: ignore
 
+        # Return the Linux-compatible path if in WSL for the user
+        if cfg.IS_WSL:
+            return cfg.windows_path_to_wsl(win_file)
         return new_file
 
     def update_software(self) -> None:
@@ -1081,6 +1166,20 @@ class PLCBlock(CompositionItem):
             raise tia_e.InvalidBlock("Value is None")
 
         temp = self.value.GetType().Name
+
+        return temp.split(".")[-1]
+
+    def get_instanceof(self) -> str:
+        """This function returns the instance of name of the block.
+        Raises:
+            tia_e.InvalidBlock: If the value is None.
+        Returns:
+            str: The instance of name
+        """
+        if self.value is None:
+            raise tia_e.InvalidBlock("Value is None")
+
+        temp = self.value.get_InstanceOfName()
 
         return temp.split(".")[-1]
 
@@ -1993,7 +2092,8 @@ class Client:
 
     def __del__(self) -> None:
         """Destructor for the Client class. This method will close the TIA Portal
-        session and kill the process. If a project is opened, it will be closed as well."""
+        session and kill the process. If a project is opened, it will be closed as well.
+        """
         if self.session is None:
             return
 
@@ -2106,37 +2206,49 @@ class Client:
 
 class Project(TiaObject):
     """A class for handling projects in the TIA Portal. This class is not intended
-    to be used directly. Use the Client class instead.
+        to be instantiated directly. Use the Client.open_project method instead.
 
     Attributes:
-        client (Client): The client object.
+        client (Client): The client used to access the TIA Portal.
         path (str): The path to the Automation folder where all subfolders are located.
         name (str): The name of the project.
-        version (Optional[TIAVersion]): The version of the project. Defaults to None.
-            If None, the version of the session will be used.
-        value (Optional[tia.Project]): The project object.
-        devices (Devices): A composition of Devices that are part of the project.
+        version (TIAVersion): The version of the project.
+        value (Optional[tia.Project]): The value of the project
+            and the connection to the C# library. So functions of the Openness API can be used on this variable.
     """
 
     def __init__(
-        self, client: Client, path: str, name: str, version: Optional[TiaVersion] = None
-    ):
-        """Constructor for the Project class.
+        self,
+        client: Client,
+        path: Union[str, FileInfo],
+        name: Optional[str] = None,
+        version: Optional[TiaVersion] = None,
+    ) -> None:
+        """Initializes the project.
 
         Parameters:
-            client (Client): The client object that created this project. This is used to access the session object.
-            path (str): The path to the Automation folder where all subfolders are located.
-            name (str): The name of the project.
+            client (Client): The client used to access the TIA Portal.
+            path (Union[str, FileInfo]): The path to the Automation folder where all subfolders are located.
+                If this is a FileInfo, the name and version are extracted from the file name.
+            name (Optional[str], optional): The name of the project. Defaults to None.
+                If None, the name will be extracted from the path.
             version (Optional[TIAVersion], optional): The version of the project. Defaults to None.
                 If None, the version of the session will be used.
         """
         self.client = client
-        self.path = path
         self.name = name
         self.__value = None
 
-        self.version = version if version is not None else cfg.VERSION
-        self.value = None
+        # Convert path if it's a string and we're in WSL
+        if isinstance(path, str):
+            self.path = cfg.normalize_path(path)
+        else:
+            self.path = path
+
+        if version is None:
+            self.version = cfg.VERSION
+        else:
+            self.version = version
 
     @property
     def value(self) -> Optional[tia.Project]:
@@ -2173,6 +2285,9 @@ class Project(TiaObject):
             )
             file_path = os.path.join(self.path, self.name, file_name)
             self.name = self.name
+
+            # Normalize the path for FileInfo
+            file_path = cfg.normalize_path(file_path)
 
             if not os.path.exists(file_path):
                 raise tia_e.TIAProjectNotFound(f"File {file_path} does not exist")
@@ -2231,10 +2346,15 @@ class Project(TiaObject):
         )
         file_path = os.path.join(self.path, self.name, file_name)
 
+        # Normalize the file path for Windows access
+        file_path = cfg.normalize_path(file_path)
+
         if os.path.exists(file_path):
             raise tia_e.TIAProjectAlreadyExists(f"File {file_path} already exists")
 
-        self.value = session.Projects.Create(DirectoryInfo(self.path), self.name)
+        # Normalize the directory path for DirectoryInfo
+        dir_path = cfg.normalize_path(self.path)
+        self.value = session.Projects.Create(DirectoryInfo(dir_path), self.name)
 
         self.client.project = self
 
