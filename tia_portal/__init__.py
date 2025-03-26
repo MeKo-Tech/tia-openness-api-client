@@ -26,55 +26,18 @@ from System.IO import DirectoryInfo, FileInfo  # type: ignore pylint: disable=im
 # Function to find the correct DLL path
 def find_dll_path():
     """Find the correct DLL path based on environment and TIA Portal version."""
-    # List of possible DLL locations - try multiple paths for flexibility
-    possible_paths = []
+    # Standard path for native Windows Python
+    windows_dll_path = f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}\\Siemens.Engineering.dll"
 
-    # Build base paths based on environment
-    if cfg.IS_WSL:
-        # When in WSL, we should first check the path in WSL format
-        wsl_base_path = f"/mnt/c/Program Files/Siemens/Automation/Portal {cfg.VERSION.name}/PublicAPI/V{cfg.VERSION.value.replace('_', '.')}"
-        wsl_dll_path = f"{wsl_base_path}/Siemens.Engineering.dll"
-
-        print(f"Checking WSL path: {wsl_dll_path}")
-        if os.path.exists(wsl_dll_path):
-            print(f"Found DLL at WSL path: {wsl_dll_path}")
-            return wsl_dll_path
-
-        # If direct WSL path doesn't work, we may need to use the Windows path with pythonnet
-        # This requires the Windows path format for clr.AddReference
-        windows_base_path = f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}"
-        windows_dll_path = f"{windows_base_path}\\Siemens.Engineering.dll"
-
-        # Convert from Windows to WSL path for os.path.exists check
-        windows_path_for_check = cfg.windows_path_to_wsl(windows_dll_path)
-        print(f"Checking Windows path converted to WSL: {windows_path_for_check}")
-
-        if os.path.exists(windows_path_for_check):
-            print(f"Found DLL at Windows path (via WSL conversion): {windows_dll_path}")
-            # Use the Windows path format for clr.AddReference
-            return windows_dll_path
-
-        # Try alternative WSL path formats
-        alt_wsl_path = f"/mnt/c/Program Files/Siemens/Automation/Portal V{cfg.VERSION.value.replace('_', '.')}/PublicAPI/V{cfg.VERSION.value.replace('_', '.')}/Siemens.Engineering.dll"
-        if os.path.exists(alt_wsl_path):
-            print(f"Found DLL at alternative WSL path: {alt_wsl_path}")
-            return alt_wsl_path
-    else:
-        # Standard path for native Windows Python
-        windows_dll_path = f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}\\Siemens.Engineering.dll"
-
-        if os.path.exists(windows_dll_path):
-            print(f"Found DLL at Windows path: {windows_dll_path}")
-            return windows_dll_path
+    if os.path.exists(windows_dll_path):
+        print(f"Found DLL at Windows path: {windows_dll_path}")
+        return windows_dll_path
 
     # If we reach here, we couldn't find the DLL
     print("Could not find the DLL in any of the standard locations.")
 
     # Return a default path that will likely fail, but with a clear error
-    if cfg.IS_WSL:
-        return f"/mnt/c/Program Files/Siemens/Automation/Portal {cfg.VERSION.name}/PublicAPI/V{cfg.VERSION.value.replace('_', '.')}/Siemens.Engineering.dll"
-    else:
-        return f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}\\Siemens.Engineering.dll"
+    return f"C:\\Program Files\\Siemens\\Automation\\Portal {cfg.VERSION.name}\\PublicAPI\\V{cfg.VERSION.value.replace('_', '.')}\\Siemens.Engineering.dll"
 
 
 # Find the correct DLL path
@@ -82,35 +45,17 @@ print("Searching for TIA Portal DLL...")
 dll_path = find_dll_path()
 
 if not os.path.exists(dll_path):
-    if cfg.IS_WSL:
-        raise tia_e.LibraryDLLNotFound(
-            f"Could not find the TIA Portal DLL at {dll_path}.\n"
-            f"When running in WSL, make sure TIA Portal V{cfg.VERSION.value} is installed on Windows and accessible from WSL.\n"
-            f"Try running 'ls -la {os.path.dirname(dll_path)}' to check if the directory exists and is accessible."
-        )
-    else:
-        raise tia_e.LibraryDLLNotFound(
-            f"Could not find {dll_path}. Please check if TIA Portal V{cfg.VERSION.value} is installed correctly."
-        )
+    raise tia_e.LibraryDLLNotFound(
+        f"Could not find {dll_path}. Please check if TIA Portal V{cfg.VERSION.value} is installed correctly."
+    )
 
 try:
     print(f"Loading DLL from: {dll_path}")
     clr.AddReference(dll_path)  # type: ignore pylint: disable=no-member
 except Exception as e:
-    if cfg.IS_WSL:
-        raise tia_e.LibraryImportError(
-            f"Failed to load the TIA Portal DLL from WSL.\n"
-            f"DLL path: {dll_path}\n"
-            f"Error: {str(e)}\n"
-            f"In WSL environments, you need to:\n"
-            f"1. Make sure TIA Portal V{cfg.VERSION.value} is installed on Windows\n"
-            f"2. Ensure that .NET Framework is properly installed\n"
-            f"3. Consider using Windows Python instead of WSL for direct TIA Portal access"
-        ) from e
-    else:
-        raise tia_e.LibraryImportError(
-            f"Could not load {dll_path}. Error: {str(e)}"
-        ) from e
+    raise tia_e.LibraryImportError(
+        f"Could not load {dll_path}. Error: {str(e)}"
+    ) from e
 
 try:
     import Siemens.Engineering as tia  # type: ignore pylint: disable=import-error

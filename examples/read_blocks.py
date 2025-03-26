@@ -2,7 +2,6 @@
 """
 Example script to read all PLC blocks from a TIA Portal project.
 This script works exclusively with already open TIA Portal instances.
-It automatically handles Windows and WSL environments without any user configuration.
 """
 
 import os
@@ -10,26 +9,6 @@ import sys
 import argparse
 import subprocess
 import platform
-
-# Check if running in WSL before importing TIA Portal
-IS_WSL = False
-try:
-    if platform.system() == "Linux":
-        with open("/proc/version", "r") as f:
-            if "microsoft" in f.read().lower():
-                IS_WSL = True
-except:
-    pass
-
-# Print warning if running in WSL
-if IS_WSL:
-    print("\n" + "=" * 80)
-    print("WARNING: Running in WSL environment")
-    print("Connecting to TIA Portal from WSL has limitations.")
-    print(
-        "If you encounter issues, consider running the script from Windows Python instead."
-    )
-    print("=" * 80 + "\n")
 
 try:
     import tia_portal.config as tia_config
@@ -40,14 +19,6 @@ try:
     import Siemens.Engineering as tia  # type: ignore
 except ImportError as e:
     print(f"Error importing TIA Portal libraries: {e}")
-    if IS_WSL:
-        print("\nWhen running in WSL, make sure:")
-        print("1. TIA Portal is installed on Windows")
-        print("2. The path to TIA Portal is accessible from WSL")
-        print("3. You've installed the Python dependencies: pythonnet")
-        print(
-            "\nConsider running the script directly from Windows Python for better compatibility."
-        )
     sys.exit(1)
 
 
@@ -72,12 +43,6 @@ def get_active_tia_portal_instances():
         return tia_processes
     except Exception as e:
         print(f"Error getting TIA Portal processes: {e}")
-        if IS_WSL:
-            print("\nIn WSL environments, connecting to running TIA Portal instances")
-            print(
-                "can be challenging due to Windows/Linux interoperability limitations."
-            )
-            print("Consider running this script directly from Windows Python.")
         return []
 
 
@@ -114,7 +79,6 @@ def main():
 
     print(f"\nEnvironment information:")
     print(f"  - TIA Portal version: {tia_config.VERSION.name}")
-    print(f"  - Running in WSL: {'Yes' if tia_config.IS_WSL else 'No'}")
 
     # Get active TIA Portal instances
     tia_processes = get_active_tia_portal_instances()
@@ -156,12 +120,6 @@ def main():
             print("Successfully attached to TIA Portal instance")
         except Exception as e:
             print(f"Error attaching to TIA Portal: {e}")
-            if tia_config.IS_WSL:
-                print("\nAttaching to TIA Portal from WSL has limitations.")
-                print(
-                    "This is likely due to interoperability issues between Windows and Linux."
-                )
-                print("Consider running this script directly from Windows Python.")
             sys.exit(1)
 
         # Create custom client and assign the session
@@ -248,9 +206,6 @@ def main():
             import traceback
 
             traceback.print_exc()
-    finally:
-        print("\nLeaving TIA Portal instance running")
-
 
 if __name__ == "__main__":
     main()
