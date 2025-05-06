@@ -1965,6 +1965,11 @@ class Client:
         via Openness API to connect to a TIA Portal instance."""
         self.session: Optional[tia.TiaPortal] = tia.TiaPortal(tia.TiaPortalMode.WithoutUserInterface)  # type: ignore
         self.project: Optional[Project] = None
+        self._is_attached = False  # Flag to indicate if attached to existing process
+    
+    def set_attached(self, is_attached: bool = True) -> None:
+        """Set whether this client is attached to an existing TIA Portal process."""
+        self._is_attached = is_attached
 
     # ==================================================================================================================
     # GUI actions
@@ -2038,8 +2043,14 @@ class Client:
     def __del__(self) -> None:
         """Destructor for the Client class. This method will close the TIA Portal
         session and kill the process. If a project is opened, it will be closed as well.
+        Only does this if this client created the TIA Portal instance.
         """
         if self.session is None:
+            return
+
+        # If we're attached to an existing process, don't close or kill it
+        if self._is_attached:
+            self.session = None
             return
 
         try:
@@ -2052,7 +2063,7 @@ class Client:
             Process.GetProcessById(process.Id).Kill()
         except Exception:  # pylint: disable=broad-except
             pass
-
+            
     # ==================================================================================================================
     # PROJECTS
     # ==================================================================================================================
